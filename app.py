@@ -5,6 +5,25 @@ import requests
 import re
 
 st.set_page_config(page_title="Dashboard MR & Fatturato", layout="wide")
+st.set_page_config(page_title="Dashboard MR & Fatturato", layout="wide")
+st.markdown("""
+<style>
+/* KPI: evita i "..." e riduce un filo il font */
+div[data-testid="stMetricValue"]{
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  font-size: 1.45rem !important;
+  line-height: 1.15 !important;
+}
+div[data-testid="stMetricLabel"]{
+  font-size: 0.95rem !important;
+}
+div[data-testid="stMetricDelta"]{
+  font-size: 0.95rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY")
@@ -430,16 +449,24 @@ srv = kpi_fatt("Servizi")
 
 def render_block(title, k):
     st.markdown(f"### {title}")
-    r1 = st.columns(4)
-    r1[0].metric("Fatturato", fmt_ita(k["fatt"], eur=True))
-    r1[1].metric("Rolling", fmt_ita(k["roll"], eur=True))
-    r1[2].metric("Budget (periodo)", fmt_ita(k["bud_period"], eur=True))
-    r1[3].metric("Budget (sem)", fmt_ita(k["bud_sem"], eur=True))
 
-    r2 = st.columns(3)
-    r2[0].metric("vs PY", fmt_ita(k["d_py"], eur=True), pct(k["p_py"]))
+    # Riga 1 (2 colonne)
+    r1 = st.columns(2)
+    r1[0].metric("Fatturato", fmt_ita(k["fatt"], eur=True))
+    r1[1].metric("vs PY", fmt_ita(k["d_py"], eur=True), pct(k["p_py"]))
+
+    # Riga 2 (2 colonne)
+    r2 = st.columns(2)
+    r2[0].metric("Rolling", fmt_ita(k["roll"], eur=True))
     r2[1].metric("vs Rolling", fmt_ita(k["d_roll"], eur=True), pct(k["p_roll"]))
-    r2[2].metric("vs Budget", fmt_ita(k["d_bud"], eur=True), pct(k["p_bud"]))
+
+    # Riga 3 (2 colonne)
+    r3 = st.columns(2)
+    r3[0].metric("Budget (periodo)", fmt_ita(k["bud_period"], eur=True))
+    r3[1].metric("vs Budget", fmt_ita(k["d_bud"], eur=True), pct(k["p_bud"]))
+
+    # Riga 4 (larga)
+    st.metric("Budget (sem)", fmt_ita(k["bud_sem"], eur=True))
 
 cA, cB = st.columns(2)
 with cA:
