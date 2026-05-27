@@ -160,7 +160,6 @@ def eu_to_float(v):
     s = re.sub(r"[^0-9,.\-]", "", s)
     if s == "" or s in {"-", ".", ","}:
         return 0.0
-
     last_comma = s.rfind(",")
     last_dot = s.rfind(".")
     if last_comma == -1 and last_dot == -1:
@@ -168,7 +167,6 @@ def eu_to_float(v):
             return float(s)
         except Exception:
             return 0.0
-
     if last_comma > last_dot:
         s = s.replace(".", "")
         s = s.replace(",", ".")
@@ -429,6 +427,28 @@ st.subheader("KPI Fatturato (periodo selezionato)")
 sw = kpi_fatt("Software")
 srv = kpi_fatt("Servizi")
 
+def kpi_total(a, b):
+    fatt = a["fatt"] + b["fatt"]
+    py = a["py"] + b["py"]
+    roll = a["roll"] + b["roll"]
+    bud_period = a["bud_period"] + b["bud_period"]
+    bud_sem = a["bud_sem"] + b["bud_sem"]
+    return {
+        "fatt": fatt,
+        "py": py,
+        "roll": roll,
+        "bud_period": bud_period,
+        "bud_sem": bud_sem,
+        "d_py": fatt - py,
+        "p_py": safe_pct(fatt - py, py),
+        "d_roll": fatt - roll,
+        "p_roll": safe_pct(fatt - roll, roll),
+        "d_bud": fatt - bud_period,
+        "p_bud": safe_pct(fatt - bud_period, bud_period),
+    }
+
+tot = kpi_total(sw, srv)
+
 def render_block(title, k):
     st.markdown(f"### {title}")
 
@@ -446,11 +466,14 @@ def render_block(title, k):
 
     st.metric("Budget (sem)", fmt_ita(k["bud_sem"], eur=True))
 
-cA, cB = st.columns(2)
+# 3 blocchi: SW / SRV / TOT
+cA, cB, cC = st.columns(3)
 with cA:
     render_block("SOFTWARE", sw)
 with cB:
     render_block("SERVIZI", srv)
+with cC:
+    render_block("TOTALE", tot)
 
 # ---- MR ----
 st.subheader("MR")
@@ -502,3 +525,74 @@ with cc1:
     plot_tipo("Software")
 with cc2:
     plot_tipo("Servizi")
+
+# ---- TABELLA: spaccato numerico mese per mese ----
+st.subheader("Tabella mese per mese (periodo selezionato)")
+
+def month_table(label: str):
+    d = df_range[df_range["tipo"].astype(str).str.lower() == label.lower()].copy()
+    if d.empty:
+        return pd.DataFrame()
+    t = d.groupby("num_mese", as_index=False).agg(
+        Attuale=("attuale_mese","sum"),
+        PY=("py_mese","sum"),
+        Rolling=("budget_rolling_mese","sum"),
+    )
+    t["vs_PY"] = t["Attuale"] - t["PY"]
+    t["vs_Rolling"] = t["Attuale"] - t["Rolling"]
+    t["Mese"] = t["num_mese"].apply(lambda m: f"{int(m):02d}-{months_it.get(int(m), str(m))}")
+    t = t[["Mese","Attuale","PY","Rolling","vs_PY","vs_Rolling"]]
+    return t
+
+sw_t = month_table("Software")
+srv_t = month_table("Servizi")
+
+# totale mese per mese (somma delle tabelle)
+if not sw_t.empty or not srv_t.empty:
+    # merge per Mese
+    base = pd.DataFrame({"Mese": sorted(set((sw_t["Mese"].tolist() if not sw_t.empty else []) + (srv_t["Mese"].tolist() if not srv_t.empty else [])))})
+    def merge_on(base, t, prefix):
+        if t.empty:
+            for c in ["Attuale","PY","Rolling","vs_PY","vs_Rolling"]:
+                base[f"{prefix}_{c}"] = 0.0
+            return base
+        tmp = t.copy()
+        for c in ["Attuale","PY","Rolling","vs_PY","vs_Rolling"]:
+            tmp.rename(columns={c:f"{prefix}_{c}"}, inplace=True)
+        return base.merge(tmp, on="Mese", how="left").fillna(0.0)
+
+    base = merge_on(base, sw_t, "SW")
+    base = merge_on(base, srv_t, "SRV")
+
+    tot_t = pd.DataFrame()
+    tot_t["Mese"] = base["Mese"]
+    tot_t["Attuale"] = base["SW_Attuale"] + base["SRV_Attuale"]
+    tot_t["PY"] = base["SW_PY"] + base["SRV_PY"]
+    tot_t["Rolling"] = base["SW_Rolling"] + base["SRV_Rolling"]
+    tot_t["vs_PY"] = tot_t["Attuale"] - tot_t["PY"]
+    tot_t["vs_Rolling"] = tot_t["Attuale"] - tot_t["Rolling"]
+
+else:
+    tot_t = pd.DataFrame()
+
+def show_table(title, t):
+    if t.empty:
+        st.info(f"Nessun dato per {title}")
+        return
+    st.markdown(f"**{title}**")
+    sty = t.style.format({
+        "Attuale": lambda x: fmt_ita(x, eur=True),
+        "PY": lambda x: fmt_ita(x, eur=True),
+        "Rolling": lambda x: fmt_ita(x, eur=True),
+        "vs_PY": lambda x: fmt_ita(x, eur=True),
+        "vs_Rolling": lambda x: fmt_ita(x, eur=True),
+    })
+    st.dataframe(sty, use_container_width=True, hide_index=True)
+
+t1, t2, t3 = st.columns(3)
+with t1:
+    show_table("Software", sw_t)
+with t2:
+    show_table("Servizi", srv_t)
+with t3:
+    show_table("Totale", tot_t)
