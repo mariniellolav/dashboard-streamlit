@@ -28,6 +28,14 @@ def fmt_ita(n, dec=2, eur=False):
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234.567,89
     return f"{s} €" if eur else s
 
+def fmt_pct(x, dec=2):
+    try:
+        v = float(x) * 100
+    except Exception:
+        v = 0.0
+    s = f"{v:.{dec}f}".replace(".", ",")
+    return f"{s}%"
+
 PLOTLY_SEPARATORS = ",."  # decimale=',' migliaia='.'
 
 # ---------- Supabase REST ----------
@@ -229,10 +237,17 @@ if user_role == "manager":
         uploaded_df_preview = df_up.copy()
 
         required = ["data", "anno", "semestre", "num_mese", "account", "tipo"]
+        num_cols = ["valore_attuale", "attuale_mese", "budget_rolling_mese", "valore_budget", "py_mese", "mr_base_usato"]
+        allowed = set(required + num_cols)
+
         missing = [c for c in required if c not in df_up.columns]
+        unknown = sorted([c for c in df_up.columns if c not in allowed])
+
         if missing:
             st.sidebar.error(f"CSV non valido. Colonne mancanti: {missing}")
         else:
+            if unknown:
+                st.sidebar.warning(f"Colonne non usate (ok): {unknown}")
             st.sidebar.write("Righe CSV:", len(df_up))
             try:
                 yrs = sorted(df_up["anno"].dropna().unique().tolist())
@@ -246,8 +261,6 @@ if user_role == "manager":
                 with st.spinner("Normalizzo dati..."):
                     df_up["data"] = df_up["data"].apply(parse_date_any)
 
-                    num_cols = ["valore_attuale", "attuale_mese", "budget_rolling_mese",
-                                "valore_budget", "py_mese", "mr_base_usato"]
                     for c in num_cols:
                         if c not in df_up.columns:
                             df_up[c] = 0
@@ -331,9 +344,12 @@ if not years:
     st.warning("Nessun anno disponibile (oppure RLS filtra tutto).")
     st.stop()
 
+# ----- Filtri rapidi (anno + semestre) -----
 st.sidebar.header("Filtri")
 anno = st.sidebar.selectbox("Anno", years)
-semestre = st.sidebar.selectbox("Semestre", ["S1", "S2"])
+
+# radio è più rapido del selectbox
+semestre = st.sidebar.radio("Semestre", ["S1", "S2"], index=0)
 
 select_cols = ",".join([
     "data","anno","semestre","num_mese","account","tipo",
@@ -363,12 +379,24 @@ df["data"] = pd.to_datetime(df["data"], errors="coerce")
 for c in ["valore_attuale","attuale_mese","budget_rolling_mese","valore_budget","py_mese"]:
     df[c] = pd.to_numeric(df.get(c, 0), errors="coerce").fillna(0.0)
 
-# ---- FILTRO MESI (slider) ----
+# ---- FILTRI MESE: dropdown + slider ----
 min_m = int(df["num_mese"].min())
 max_m = int(df["num_mese"].max())
-m_from, m_to = st.sidebar.slider("Mesi (da - a)", min_m, max_m, (min_m, max_m))
-df = df[(df["num_mese"] >= m_from) & (df["num_mese"] <= m_to)]
 
+months_it = {
+    1:"Gen",2:"Feb",3:"Mar",4:"Apr",5:"Mag",6:"Giu",
+    7:"Lug",8:"Ago",9:"Set",10:"Ott",11:"Nov",12:"Dic"
+}
+month_options = ["Tutti"] + [f"{m:02d} - {months_it.get(m,str(m))}" for m in range(min_m, max_m+1)]
+month_pick = st.sidebar.selectbox("Mese singolo (opzionale)", month_options, index=0)
+
+if month_pick != "Tutti":
+    m = int(month_pick.split(" - ")[0])
+    m_from, m_to = m, m
+else:
+    m_from, m_to = st.sidebar.slider("Mesi (da - a)", min_m, max_m, (min_m, max_m))
+
+df = df[(df["num_mese"] >= m_from) & (df["num_mese"] <= m_to)]
 if df.empty:
     st.warning("Nessun dato nel range mesi selezionato.")
     st.stop()
@@ -378,8 +406,40 @@ acc_sel = st.sidebar.multiselect("Account (opzionale)", accounts, default=[])
 if acc_sel:
     df = df[df["account"].isin(acc_sel)]
 
+# ---------- KPI fatturato ----------
+def kpi_fatturato(tipo_label: str):
+    d = df[df["tipo"].astype(str).str.lower() == tipo_label.lower()].copy()
+    att = float(d["attuale_mese"].sum()) if not d.empty else 0.0
+    py = float(d["py_mese"].sum()) if not d.empty else 0.0
+    roll = float(d["budget_rolling_mese"].sum()) if not d.empty else 0.0
+
+    vs_py = att - py
+    vs_py_pct = 0.0 if py == 0 else vs_py / py
+
+    vs_roll = att - roll
+    vs_roll_pct = 0.0 if roll == 0 else vs_roll / roll
+
+    return att, py, roll, vs_py, vs_py_pct, vs_roll, vs_roll_pct
+
+sw_att, sw_py, sw_roll, sw_dpy, sw_dpy_pct, sw_drl, sw_drl_pct = kpi_fatturato("Software")
+srv_att, srv_py, srv_roll, srv_dpy, srv_dpy_pct, srv_drl, srv_drl_pct = kpi_fatturato("Servizi")
+
+st.subheader("KPI Fatturato (periodo selezionato)")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Software €", fmt_ita(sw_att, eur=True))
+c2.metric("Software vs PY €", fmt_ita(sw_dpy, eur=True), fmt_pct(sw_dpy_pct))
+c3.metric("Software vs Rolling €", fmt_ita(sw_drl, eur=True), fmt_pct(sw_drl_pct))
+c4.metric("Software PY / Rolling", f"{fmt_ita(sw_py, eur=True)} / {fmt_ita(sw_roll, eur=True)}")
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Servizi €", fmt_ita(srv_att, eur=True))
+c2.metric("Servizi vs PY €", fmt_ita(srv_dpy, eur=True), fmt_pct(srv_dpy_pct))
+c3.metric("Servizi vs Rolling €", fmt_ita(srv_drl, eur=True), fmt_pct(srv_drl_pct))
+c4.metric("Servizi PY / Rolling", f"{fmt_ita(srv_py, eur=True)} / {fmt_ita(srv_roll, eur=True)}")
+
 # --- MR KPI + chart ---
 df_mr = df[df["tipo"].astype(str).str.upper() == "MR"].copy()
+st.subheader("MR")
 if not df_mr.empty:
     mr_stock = (
         df_mr.groupby(["num_mese","account"])["valore_attuale"].max()
@@ -421,6 +481,7 @@ def plot_tipo(label: str):
     fig.update_layout(separators=PLOTLY_SEPARATORS)
     st.plotly_chart(fig, use_container_width=True)
 
+st.subheader("Andamento mese per mese")
 c1, c2 = st.columns(2)
 with c1:
     plot_tipo("Software")
