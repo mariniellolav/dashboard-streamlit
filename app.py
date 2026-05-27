@@ -5,10 +5,10 @@ import requests
 import re
 
 st.set_page_config(page_title="Dashboard MR & Fatturato", layout="wide")
-st.set_page_config(page_title="Dashboard MR & Fatturato", layout="wide")
+
+# --- CSS: evita troncamenti KPI ---
 st.markdown("""
 <style>
-/* KPI: evita i "..." e riduce un filo il font */
 div[data-testid="stMetricValue"]{
   white-space: normal !important;
   overflow: visible !important;
@@ -16,12 +16,8 @@ div[data-testid="stMetricValue"]{
   font-size: 1.45rem !important;
   line-height: 1.15 !important;
 }
-div[data-testid="stMetricLabel"]{
-  font-size: 0.95rem !important;
-}
-div[data-testid="stMetricDelta"]{
-  font-size: 0.95rem !important;
-}
+div[data-testid="stMetricLabel"]{ font-size: 0.95rem !important; }
+div[data-testid="stMetricDelta"]{ font-size: 0.95rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,7 +39,7 @@ def fmt_ita(n, dec=2, eur=False):
         x = float(n)
     except Exception:
         return "0,00 €" if eur else "0,00"
-    s = f"{x:,.{dec}f}"           # 1,234,567.89
+    s = f"{x:,.{dec}f}"            # 1,234,567.89
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234.567,89
     return f"{s} €" if eur else s
 
@@ -199,10 +195,10 @@ if "access_token" not in st.session_state:
 email_in = st.sidebar.text_input("Email", value=st.session_state.user_email or "")
 password_in = st.sidebar.text_input("Password", type="password")
 
-col_login1, col_login2 = st.sidebar.columns(2)
-with col_login1:
+cL1, cL2 = st.sidebar.columns(2)
+with cL1:
     do_login = st.button("Entra")
-with col_login2:
+with cL2:
     do_logout = st.button("Esci")
 
 if do_logout:
@@ -234,9 +230,8 @@ token = st.session_state.access_token
 user_role = st.session_state.role or "sales"
 st.sidebar.success(f"Loggato: {st.session_state.user_email} ({user_role})")
 
-# ---------------- Upload CSV (solo manager) + ANTEPRIMA ----------------
+# ---------------- Upload CSV (solo manager) + preview ----------------
 uploaded_df_preview = None
-
 if user_role == "manager":
     st.sidebar.divider()
     st.sidebar.subheader("Upload CSV (solo manager)")
@@ -291,17 +286,13 @@ if user_role == "manager":
                     df_up = df_up[df_up["data"].notna()]
 
                 if df_up.empty:
-                    st.sidebar.error("Dopo normalizzazione non resta nessuna riga valida (controlla la colonna data).")
+                    st.sidebar.error("Dopo normalizzazione non resta nessuna riga valida.")
                 else:
                     if replace_mode:
                         pairs = sorted(set(zip(df_up["anno"].tolist(), df_up["semestre"].tolist())))
                         with st.spinner("Cancello dati esistenti (anno+semestre)..."):
                             for (a, s) in pairs:
-                                rdel = sb_delete(
-                                    "/rest/v1/facts",
-                                    token,
-                                    params={"anno": f"eq.{a}", "semestre": f"eq.{s}"},
-                                )
+                                rdel = sb_delete("/rest/v1/facts", token, params={"anno": f"eq.{a}", "semestre": f"eq.{s}"})
                                 if rdel.status_code not in (200, 204):
                                     st.sidebar.error(f"Errore delete {a}-{s}: {rdel.status_code} {rdel.text}")
                                     st.stop()
@@ -336,7 +327,7 @@ if user_role == "manager" and uploaded_df_preview is not None:
     with st.expander("Anteprima CSV (prima del caricamento)"):
         st.dataframe(uploaded_df_preview.head(50), use_container_width=True)
 
-# anni disponibili (RLS)
+# anni disponibili
 r = sb_get("/rest/v1/facts", token, params={"select": "anno", "limit": "5000"})
 if r.status_code != 200:
     st.error(f"Errore lettura anni ({r.status_code}): {r.text}")
@@ -345,10 +336,9 @@ if r.status_code != 200:
 years_raw = r.json()
 years = sorted({row.get("anno") for row in years_raw if row.get("anno") is not None})
 if not years:
-    st.warning("Nessun anno disponibile (oppure RLS filtra tutto).")
+    st.warning("Nessun anno disponibile.")
     st.stop()
 
-# Filtri
 st.sidebar.header("Filtri")
 anno = st.sidebar.selectbox("Anno", years)
 semestre = st.sidebar.radio("Semestre", ["S1", "S2"], index=0)
@@ -361,12 +351,7 @@ select_cols = ",".join([
 r = sb_get(
     "/rest/v1/facts",
     token,
-    params={
-        "select": select_cols,
-        "anno": f"eq.{int(anno)}",
-        "semestre": f"eq.{semestre}",
-        "limit": "100000",
-    },
+    params={"select": select_cols, "anno": f"eq.{int(anno)}", "semestre": f"eq.{semestre}", "limit": "100000"},
 )
 if r.status_code != 200:
     st.error(f"Errore lettura facts ({r.status_code}): {r.text}")
@@ -381,7 +366,7 @@ df_sem["data"] = pd.to_datetime(df_sem["data"], errors="coerce")
 for c in ["valore_attuale","attuale_mese","budget_rolling_mese","valore_budget","py_mese"]:
     df_sem[c] = pd.to_numeric(df_sem.get(c, 0), errors="coerce").fillna(0.0)
 
-# mesi
+# mesi + account
 min_m = int(df_sem["num_mese"].min())
 max_m = int(df_sem["num_mese"].max())
 
@@ -395,7 +380,6 @@ if month_pick != "Tutti":
 else:
     m_from, m_to = st.sidebar.slider("Mesi (da - a)", min_m, max_m, (min_m, max_m))
 
-# filtro account
 accounts_all = sorted(df_sem["account"].dropna().unique().tolist())
 acc_sel = st.sidebar.multiselect("Account (opzionale)", accounts_all, default=[])
 if acc_sel:
@@ -406,11 +390,9 @@ if df_range.empty:
     st.warning("Nessun dato nel periodo selezionato.")
     st.stop()
 
-# mesi count per budget lineare periodo
 months_total = max(df_sem["num_mese"].nunique(), 1)
 months_selected = max(df_range["num_mese"].nunique(), 1)
 
-# ---- KPI fatturato (formato attuale, ma con tutti i numeri richiesti) ----
 def safe_pct(delta, base):
     return 0.0 if base == 0 else (delta / base)
 
@@ -450,22 +432,18 @@ srv = kpi_fatt("Servizi")
 def render_block(title, k):
     st.markdown(f"### {title}")
 
-    # Riga 1 (2 colonne)
     r1 = st.columns(2)
     r1[0].metric("Fatturato", fmt_ita(k["fatt"], eur=True))
     r1[1].metric("vs PY", fmt_ita(k["d_py"], eur=True), pct(k["p_py"]))
 
-    # Riga 2 (2 colonne)
     r2 = st.columns(2)
     r2[0].metric("Rolling", fmt_ita(k["roll"], eur=True))
     r2[1].metric("vs Rolling", fmt_ita(k["d_roll"], eur=True), pct(k["p_roll"]))
 
-    # Riga 3 (2 colonne)
     r3 = st.columns(2)
     r3[0].metric("Budget (periodo)", fmt_ita(k["bud_period"], eur=True))
     r3[1].metric("vs Budget", fmt_ita(k["d_bud"], eur=True), pct(k["p_bud"]))
 
-    # Riga 4 (larga)
     st.metric("Budget (sem)", fmt_ita(k["bud_sem"], eur=True))
 
 cA, cB = st.columns(2)
@@ -474,7 +452,7 @@ with cA:
 with cB:
     render_block("SERVIZI", srv)
 
-# ---- KPI MR ----
+# ---- MR ----
 st.subheader("MR")
 df_mr = df_range[df_range["tipo"].astype(str).str.upper() == "MR"].copy()
 if not df_mr.empty:
@@ -488,12 +466,12 @@ if not df_mr.empty:
     prog = 0.0 if last_target == 0 else last_stock / last_target
 
     m1, m2 = st.columns(2)
-m1.metric("MR (fine periodo)", fmt_ita(last_stock, eur=True))
-m2.metric("MR Target semestre", fmt_ita(last_target, eur=True))
+    m1.metric("MR (fine periodo)", fmt_ita(last_stock, eur=True))
+    m2.metric("MR Target semestre", fmt_ita(last_target, eur=True))
 
-m3, m4 = st.columns(2)
-m3.metric("Manca al target", fmt_ita(manca, eur=True))
-m4.metric("Progress %", pct(prog))
+    m3, m4 = st.columns(2)
+    m3.metric("Manca al target", fmt_ita(manca, eur=True))
+    m4.metric("Progress %", pct(prog))
 
     fig_mr = px.line(mr_line, x="num_mese", y=["MR Stock","MR Target"], markers=True, title="MR Stock vs Target")
     fig_mr.update_layout(separators=PLOTLY_SEPARATORS)
@@ -503,6 +481,7 @@ else:
 
 # ---- Grafici fatturato ----
 st.subheader("Andamento mese per mese")
+
 def plot_tipo(label: str):
     d = df_range[df_range["tipo"].astype(str).str.lower() == label.lower()].copy()
     if d.empty:
@@ -518,8 +497,8 @@ def plot_tipo(label: str):
     fig.update_layout(separators=PLOTLY_SEPARATORS)
     st.plotly_chart(fig, use_container_width=True)
 
-c1, c2 = st.columns(2)
-with c1:
+cc1, cc2 = st.columns(2)
+with cc1:
     plot_tipo("Software")
-with c2:
+with cc2:
     plot_tipo("Servizi")
