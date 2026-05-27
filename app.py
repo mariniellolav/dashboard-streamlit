@@ -487,11 +487,13 @@ if not df_mr.empty:
     manca = last_target - last_stock
     prog = 0.0 if last_target == 0 else last_stock / last_target
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("MR (fine periodo)", fmt_ita(last_stock, eur=True))
-    m2.metric("MR Target semestre", fmt_ita(last_target, eur=True))
-    m3.metric("Manca al target", fmt_ita(manca, eur=True))
-    m4.metric("Progress %", pct(prog))
+    m1, m2 = st.columns(2)
+m1.metric("MR (fine periodo)", fmt_ita(last_stock, eur=True))
+m2.metric("MR Target semestre", fmt_ita(last_target, eur=True))
+
+m3, m4 = st.columns(2)
+m3.metric("Manca al target", fmt_ita(manca, eur=True))
+m4.metric("Progress %", pct(prog))
 
     fig_mr = px.line(mr_line, x="num_mese", y=["MR Stock","MR Target"], markers=True, title="MR Stock vs Target")
     fig_mr.update_layout(separators=PLOTLY_SEPARATORS)
