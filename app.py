@@ -587,12 +587,10 @@ def show_table(title, t):
         "vs_PY": lambda x: fmt_ita(x, eur=True),
         "vs_Rolling": lambda x: fmt_ita(x, eur=True),
     })
-    st.dataframe(sty, use_container_width=True, hide_index=True)
+    st.dataframe(sty, use_container_width=True, hide_index=True, height=320)
 
-t1, t2, t3 = st.columns(3)
-with t1:
-    show_table("Software", sw_t)
-with t2:
-    show_table("Servizi", srv_t)
-with t3:
-    show_table("Totale", tot_t)
+show_table("Software", sw_t)
+st.divider()
+show_table("Servizi", srv_t)
+st.divider()
+show_table("Totale", tot_t)
