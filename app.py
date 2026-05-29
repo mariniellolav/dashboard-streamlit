@@ -3,13 +3,13 @@ import pandas as pd
 import plotly.express as px
 import requests
 import re
+import textwrap
 
 st.set_page_config(page_title="Dashboard MR & Fatturato", layout="wide")
 
 # --- CSS: card leggere + tipografia ---
 st.markdown("""
 <style>
-/* spazio generale */
 .block-container { padding-top: 2.0rem; }
 
 /* Card */
@@ -32,7 +32,6 @@ st.markdown("""
   grid-template-columns: 1fr 1fr;
   gap: 14px 18px;
 }
-.kpi-item{ }
 .kpi-label{
   font-size: 12.5px;
   color: #666;
@@ -51,11 +50,6 @@ st.markdown("""
   align-items: center;
   margin-top: 6px;
 }
-.kpi-delta{
-  font-weight: 700;
-  font-size: 14px;
-  color: #111;
-}
 .badge{
   font-size: 12.5px;
   font-weight: 800;
@@ -67,14 +61,6 @@ st.markdown("""
 .badge.neg{ background: #fdecec; color: #b42318; }
 .badge.neu{ background: #f1f3f5; color: #4b5563; }
 
-/* Card MR più compatta */
-.kpi-grid-4{
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px 18px;
-}
-
-/* Responsive: su schermi piccoli */
 @media (max-width: 900px){
   .kpi-value{ font-size: 22px; }
 }
@@ -93,14 +79,27 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     )
     st.stop()
 
+# Normalizza URL (evita errori se qualcuno incolla /rest/v1/)
+SUPABASE_URL = SUPABASE_URL.strip()
+if SUPABASE_URL.endswith("/"):
+    SUPABASE_URL = SUPABASE_URL[:-1]
+if SUPABASE_URL.endswith("/rest/v1"):
+    SUPABASE_URL = SUPABASE_URL[:-8]
+if SUPABASE_URL.endswith("/rest/v1/"):
+    SUPABASE_URL = SUPABASE_URL[:-9]
+if SUPABASE_URL.endswith("/"):
+    SUPABASE_URL = SUPABASE_URL[:-1]
+
+PLOTLY_SEPARATORS = ",."
+
 # ---------- Helper format ITA ----------
 def fmt_ita(n, dec=2, eur=False):
     try:
         x = float(n)
     except Exception:
         return "0,00 €" if eur else "0,00"
-    s = f"{x:,.{dec}f}"
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    s = f"{x:,.{dec}f}"  # 1,234,567.89
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234.567,89
     return f"{s} €" if eur else s
 
 def pct(x):
@@ -121,8 +120,6 @@ def badge_class(p):
     if abs(v) < 1e-12:
         return "neu"
     return "pos" if v > 0 else "neg"
-
-PLOTLY_SEPARATORS = ",."
 
 # ---------- Supabase REST ----------
 def sb_headers(token=None, json=True, prefer_minimal=False):
@@ -463,7 +460,6 @@ if df_range.empty:
 
 months_total = max(df_sem["num_mese"].nunique(), 1)
 months_selected = max(df_range["num_mese"].nunique(), 1)
-
 end_month_label = f"{int(m_to):02d}-{months_it.get(int(m_to), str(m_to))}"
 
 def budget_sem(tipo_label):
@@ -513,22 +509,23 @@ def kpi_fatt(tipo_label):
 def kpi_total(a, b):
     fatt = a["fatt"] + b["fatt"]
     py = a["py"] + b["py"]
-    roll_month = a["roll_month"] + b["roll_month"]
+    roll = a["roll_month"] + b["roll_month"]
     bud_period = a["bud_period"] + b["bud_period"]
     bud_sem = a["bud_sem"] + b["bud_sem"]
+
     d_py = fatt - py
     p_py = safe_pct(d_py, py)
-    d_roll = 0.0  # verrà ricalcolato correttamente sotto
-    p_roll = 0.0
-    # vs rolling: confronto mese finale aggregato
+
     d_roll = (a["d_roll"] + b["d_roll"])
-    p_roll = safe_pct(d_roll, roll_month)
+    p_roll = safe_pct(d_roll, roll)
+
     d_bud = fatt - bud_period
     p_bud = safe_pct(d_bud, bud_period)
+
     return {
         "fatt": fatt,
         "py": py,
-        "roll_month": roll_month,
+        "roll_month": roll,
         "bud_period": bud_period,
         "bud_sem": bud_sem,
         "d_py": d_py,
@@ -543,60 +540,59 @@ sw = kpi_fatt("Software")
 srv = kpi_fatt("Servizi")
 tot = kpi_total(sw, srv)
 
-# ---------- KPI cards ----------
 def kpi_card_html(title, k):
     b1 = badge_class(k["p_py"])
     b2 = badge_class(k["p_roll"])
     b3 = badge_class(k["p_bud"])
 
     html = f"""
-    <div class="kpi-card">
-      <div class="kpi-title">{title}</div>
-      <div class="kpi-grid">
-        <div class="kpi-item">
-          <div class="kpi-label">Fatturato</div>
-          <div class="kpi-value">{fmt_ita(k["fatt"], eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">vs PY</div>
-          <div class="kpi-value">{fmt_ita(k["d_py"], eur=True)}</div>
-          <div class="kpi-sub">
-            <span class="badge {b1}">{pct(k["p_py"])}</span>
-          </div>
-        </div>
-
-        <div class="kpi-item">
-          <div class="kpi-label">Rolling ({end_month_label})</div>
-          <div class="kpi-value">{fmt_ita(k["roll_month"], eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">vs Rolling ({end_month_label})</div>
-          <div class="kpi-value">{fmt_ita(k["d_roll"], eur=True)}</div>
-          <div class="kpi-sub">
-            <span class="badge {b2}">{pct(k["p_roll"])}</span>
-          </div>
-        </div>
-
-        <div class="kpi-item">
-          <div class="kpi-label">Budget (periodo)</div>
-          <div class="kpi-value">{fmt_ita(k["bud_period"], eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">vs Budget</div>
-          <div class="kpi-value">{fmt_ita(k["d_bud"], eur=True)}</div>
-          <div class="kpi-sub">
-            <span class="badge {b3}">{pct(k["p_bud"])}</span>
-          </div>
-        </div>
-
-        <div class="kpi-item" style="grid-column: 1 / span 2;">
-          <div class="kpi-label">Budget (sem)</div>
-          <div class="kpi-value">{fmt_ita(k["bud_sem"], eur=True)}</div>
-        </div>
+<div class="kpi-card">
+  <div class="kpi-title">{title}</div>
+  <div class="kpi-grid">
+    <div class="kpi-item">
+      <div class="kpi-label">Fatturato</div>
+      <div class="kpi-value">{fmt_ita(k["fatt"], eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">vs PY</div>
+      <div class="kpi-value">{fmt_ita(k["d_py"], eur=True)}</div>
+      <div class="kpi-sub">
+        <span class="badge {b1}">{pct(k["p_py"])}</span>
       </div>
     </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+
+    <div class="kpi-item">
+      <div class="kpi-label">Rolling ({end_month_label})</div>
+      <div class="kpi-value">{fmt_ita(k["roll_month"], eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">vs Rolling ({end_month_label})</div>
+      <div class="kpi-value">{fmt_ita(k["d_roll"], eur=True)}</div>
+      <div class="kpi-sub">
+        <span class="badge {b2}">{pct(k["p_roll"])}</span>
+      </div>
+    </div>
+
+    <div class="kpi-item">
+      <div class="kpi-label">Budget (periodo)</div>
+      <div class="kpi-value">{fmt_ita(k["bud_period"], eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">vs Budget</div>
+      <div class="kpi-value">{fmt_ita(k["d_bud"], eur=True)}</div>
+      <div class="kpi-sub">
+        <span class="badge {b3}">{pct(k["p_bud"])}</span>
+      </div>
+    </div>
+
+    <div class="kpi-item" style="grid-column: 1 / span 2;">
+      <div class="kpi-label">Budget (sem)</div>
+      <div class="kpi-value">{fmt_ita(k["bud_sem"], eur=True)}</div>
+    </div>
+  </div>
+</div>
+"""
+    st.markdown(textwrap.dedent(html).strip(), unsafe_allow_html=True)
 
 st.subheader("KPI Fatturato (periodo selezionato)")
 cA, cB, cC = st.columns(3)
@@ -619,36 +615,35 @@ if not df_mr.empty:
     last_target = float(mr_line.iloc[-1]["MR Target"])
     manca = last_target - last_stock
     prog = 0.0 if last_target == 0 else last_stock / last_target
-
     prog_badge = badge_class(prog - 1.0)
 
     mr_html = f"""
-    <div class="kpi-card">
-      <div class="kpi-title">MR</div>
-      <div class="kpi-grid-4">
-        <div class="kpi-item">
-          <div class="kpi-label">MR (fine periodo)</div>
-          <div class="kpi-value">{fmt_ita(last_stock, eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">MR Target semestre</div>
-          <div class="kpi-value">{fmt_ita(last_target, eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">Manca al target</div>
-          <div class="kpi-value">{fmt_ita(manca, eur=True)}</div>
-        </div>
-        <div class="kpi-item">
-          <div class="kpi-label">Progress %</div>
-          <div class="kpi-value">{pct(prog)}</div>
-          <div class="kpi-sub">
-            <span class="badge {prog_badge}">{pct(prog-1.0)}</span>
-          </div>
-        </div>
+<div class="kpi-card">
+  <div class="kpi-title">MR</div>
+  <div class="kpi-grid">
+    <div class="kpi-item">
+      <div class="kpi-label">MR (fine periodo)</div>
+      <div class="kpi-value">{fmt_ita(last_stock, eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">MR Target semestre</div>
+      <div class="kpi-value">{fmt_ita(last_target, eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">Manca al target</div>
+      <div class="kpi-value">{fmt_ita(manca, eur=True)}</div>
+    </div>
+    <div class="kpi-item">
+      <div class="kpi-label">Progress %</div>
+      <div class="kpi-value">{pct(prog)}</div>
+      <div class="kpi-sub">
+        <span class="badge {prog_badge}">{pct(prog - 1.0)}</span>
       </div>
     </div>
-    """
-    st.markdown(mr_html, unsafe_allow_html=True)
+  </div>
+</div>
+"""
+    st.markdown(textwrap.dedent(mr_html).strip(), unsafe_allow_html=True)
 
     fig_mr = px.line(mr_line, x="num_mese", y=["MR Stock","MR Target"], markers=True, title="MR Stock vs Target")
     fig_mr.update_layout(separators=PLOTLY_SEPARATORS)
@@ -714,7 +709,7 @@ def show_table(title, t):
 sw_t = month_table("Software")
 srv_t = month_table("Servizi")
 
-# totale
+# totale mese per mese
 if not sw_t.empty or not srv_t.empty:
     all_months = sorted(set((sw_t["Mese"].tolist() if not sw_t.empty else []) + (srv_t["Mese"].tolist() if not srv_t.empty else [])))
     base = pd.DataFrame({"Mese": all_months})
