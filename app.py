@@ -39,8 +39,8 @@ def fmt_ita(n, dec=2, eur=False):
         x = float(n)
     except Exception:
         return "0,00 €" if eur else "0,00"
-    s = f"{x:,.{dec}f}"            # 1,234,567.89
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234.567,89
+    s = f"{x:,.{dec}f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{s} €" if eur else s
 
 def pct(x):
@@ -50,7 +50,7 @@ def pct(x):
         v = 0.0
     return f"{v:.2f}".replace(".", ",") + "%"
 
-PLOTLY_SEPARATORS = ",."  # decimale=',' migliaia='.'
+PLOTLY_SEPARATORS = ",."
 
 # ---------- Supabase REST ----------
 def sb_headers(token=None, json=True, prefer_minimal=False):
@@ -160,6 +160,7 @@ def eu_to_float(v):
     s = re.sub(r"[^0-9,.\-]", "", s)
     if s == "" or s in {"-", ".", ","}:
         return 0.0
+
     last_comma = s.rfind(",")
     last_dot = s.rfind(".")
     if last_comma == -1 and last_dot == -1:
@@ -167,6 +168,7 @@ def eu_to_float(v):
             return float(s)
         except Exception:
             return 0.0
+
     if last_comma > last_dot:
         s = s.replace(".", "")
         s = s.replace(",", ".")
@@ -390,6 +392,7 @@ if df_range.empty:
 
 months_total = max(df_sem["num_mese"].nunique(), 1)
 months_selected = max(df_range["num_mese"].nunique(), 1)
+end_month_label = f"{int(m_to):02d}-{months_it.get(int(m_to), str(m_to))}"
 
 def safe_pct(delta, base):
     return 0.0 if base == 0 else (delta / base)
@@ -400,76 +403,112 @@ def budget_sem(tipo_label):
         return 0.0
     return float(d.groupby("account")["valore_budget"].max().sum())
 
+# ---- KPI con Rolling mese + Rolling periodo ----
 def kpi_fatt(tipo_label):
-    d = df_range[df_range["tipo"].astype(str).str.lower() == tipo_label.lower()].copy()
-    fatt = float(d["attuale_mese"].sum()) if not d.empty else 0.0
-    py = float(d["py_mese"].sum()) if not d.empty else 0.0
-    # Rolling: prendo SOLO il valore dell'ultimo mese selezionato (m_to)
-    d_last = df_sem[(df_sem["tipo"].astype(str).str.lower() == tipo_label.lower()) &
-      (df_sem["num_mese"] == m_to)].copy()
-    roll = float(d_last["budget_rolling_mese"].sum()) if not d_last.empty else 0.0
+    d_period = df_range[df_range["tipo"].astype(str).str.lower() == tipo_label.lower()].copy()
+    fatt_period = float(d_period["attuale_mese"].sum()) if not d_period.empty else 0.0
+    py_period = float(d_period["py_mese"].sum()) if not d_period.empty else 0.0
+    roll_period = float(d_period["budget_rolling_mese"].sum()) if not d_period.empty else 0.0
+
+    d_last = df_sem[
+        (df_sem["tipo"].astype(str).str.lower() == tipo_label.lower()) &
+        (df_sem["num_mese"] == m_to)
+    ].copy()
+    fatt_last = float(d_last["attuale_mese"].sum()) if not d_last.empty else 0.0
+    py_last = float(d_last["py_mese"].sum()) if not d_last.empty else 0.0
+    roll_month = float(d_last["budget_rolling_mese"].sum()) if not d_last.empty else 0.0
 
     bud_sem_val = budget_sem(tipo_label)
     bud_period = bud_sem_val * (months_selected / months_total)
 
+    d_py_period = fatt_period - py_period
+    p_py_period = safe_pct(d_py_period, py_period)
+
+    d_roll_period = fatt_period - roll_period
+    p_roll_period = safe_pct(d_roll_period, roll_period)
+
+    d_py_last = fatt_last - py_last
+    p_py_last = safe_pct(d_py_last, py_last)
+
+    d_roll_month = fatt_last - roll_month
+    p_roll_month = safe_pct(d_roll_month, roll_month)
+
+    d_bud = fatt_period - bud_period
+    p_bud = safe_pct(d_bud, bud_period)
+
     return {
-        "fatt": fatt,
-        "py": py,
-        "roll": roll,
+        "fatt_period": fatt_period,
+        "py_period": py_period,
+        "roll_period": roll_period,
+        "fatt_last": fatt_last,
+        "py_last": py_last,
+        "roll_month": roll_month,
         "bud_period": bud_period,
         "bud_sem": bud_sem_val,
-        "d_py": fatt - py,
-        "p_py": safe_pct(fatt - py, py),
-        "d_roll": fatt - roll,
-        "p_roll": safe_pct(fatt - roll, roll),
-        "d_bud": fatt - bud_period,
-        "p_bud": safe_pct(fatt - bud_period, bud_period),
+        "d_py_period": d_py_period,
+        "p_py_period": p_py_period,
+        "d_roll_period": d_roll_period,
+        "p_roll_period": p_roll_period,
+        "d_py_last": d_py_last,
+        "p_py_last": p_py_last,
+        "d_roll_month": d_roll_month,
+        "p_roll_month": p_roll_month,
+        "d_bud": d_bud,
+        "p_bud": p_bud,
+    }
+
+def kpi_total(a, b):
+    return {
+        "fatt_period": a["fatt_period"] + b["fatt_period"],
+        "py_period": a["py_period"] + b["py_period"],
+        "roll_period": a["roll_period"] + b["roll_period"],
+        "fatt_last": a["fatt_last"] + b["fatt_last"],
+        "py_last": a["py_last"] + b["py_last"],
+        "roll_month": a["roll_month"] + b["roll_month"],
+        "bud_period": a["bud_period"] + b["bud_period"],
+        "bud_sem": a["bud_sem"] + b["bud_sem"],
+        "d_py_period": (a["fatt_period"] + b["fatt_period"]) - (a["py_period"] + b["py_period"]),
+        "p_py_period": safe_pct(((a["fatt_period"] + b["fatt_period"]) - (a["py_period"] + b["py_period"])), (a["py_period"] + b["py_period"])),
+        "d_roll_period": (a["fatt_period"] + b["fatt_period"]) - (a["roll_period"] + b["roll_period"]),
+        "p_roll_period": safe_pct(((a["fatt_period"] + b["fatt_period"]) - (a["roll_period"] + b["roll_period"])), (a["roll_period"] + b["roll_period"])),
+        "d_py_last": (a["fatt_last"] + b["fatt_last"]) - (a["py_last"] + b["py_last"]),
+        "p_py_last": safe_pct(((a["fatt_last"] + b["fatt_last"]) - (a["py_last"] + b["py_last"])), (a["py_last"] + b["py_last"])),
+        "d_roll_month": (a["fatt_last"] + b["fatt_last"]) - (a["roll_month"] + b["roll_month"]),
+        "p_roll_month": safe_pct(((a["fatt_last"] + b["fatt_last"]) - (a["roll_month"] + b["roll_month"])), (a["roll_month"] + b["roll_month"])),
+        "d_bud": (a["fatt_period"] + b["fatt_period"]) - (a["bud_period"] + b["bud_period"]),
+        "p_bud": safe_pct(((a["fatt_period"] + b["fatt_period"]) - (a["bud_period"] + b["bud_period"])), (a["bud_period"] + b["bud_period"])),
     }
 
 st.subheader("KPI Fatturato (periodo selezionato)")
 sw = kpi_fatt("Software")
 srv = kpi_fatt("Servizi")
-
-def kpi_total(a, b):
-    fatt = a["fatt"] + b["fatt"]
-    py = a["py"] + b["py"]
-    roll = a["roll"] + b["roll"]
-    bud_period = a["bud_period"] + b["bud_period"]
-    bud_sem = a["bud_sem"] + b["bud_sem"]
-    return {
-        "fatt": fatt,
-        "py": py,
-        "roll": roll,
-        "bud_period": bud_period,
-        "bud_sem": bud_sem,
-        "d_py": fatt - py,
-        "p_py": safe_pct(fatt - py, py),
-        "d_roll": fatt - roll,
-        "p_roll": safe_pct(fatt - roll, roll),
-        "d_bud": fatt - bud_period,
-        "p_bud": safe_pct(fatt - bud_period, bud_period),
-    }
-
 tot = kpi_total(sw, srv)
 
 def render_block(title, k):
     st.markdown(f"### {title}")
 
     r1 = st.columns(2)
-    r1[0].metric("Fatturato", fmt_ita(k["fatt"], eur=True))
-    r1[1].metric("vs PY", fmt_ita(k["d_py"], eur=True), pct(k["p_py"]))
+    r1[0].metric("Fatturato (periodo)", fmt_ita(k["fatt_period"], eur=True))
+    r1[1].metric("vs PY (periodo)", fmt_ita(k["d_py_period"], eur=True), pct(k["p_py_period"]))
 
     r2 = st.columns(2)
-    r2[0].metric("Rolling", fmt_ita(k["roll"], eur=True))
-    r2[1].metric("vs Rolling", fmt_ita(k["d_roll"], eur=True), pct(k["p_roll"]))
+    r2[0].metric("Rolling (periodo)", fmt_ita(k["roll_period"], eur=True))
+    r2[1].metric("vs Rolling (periodo)", fmt_ita(k["d_roll_period"], eur=True), pct(k["p_roll_period"]))
 
     r3 = st.columns(2)
-    r3[0].metric("Budget (periodo)", fmt_ita(k["bud_period"], eur=True))
-    r3[1].metric("vs Budget", fmt_ita(k["d_bud"], eur=True), pct(k["p_bud"]))
+    r3[0].metric(f"Fatturato ({end_month_label})", fmt_ita(k["fatt_last"], eur=True))
+    r3[1].metric(f"vs PY ({end_month_label})", fmt_ita(k["d_py_last"], eur=True), pct(k["p_py_last"]))
+
+    r4 = st.columns(2)
+    r4[0].metric(f"Rolling ({end_month_label})", fmt_ita(k["roll_month"], eur=True))
+    r4[1].metric(f"vs Rolling ({end_month_label})", fmt_ita(k["d_roll_month"], eur=True), pct(k["p_roll_month"]))
+
+    r5 = st.columns(2)
+    r5[0].metric("Budget (periodo)", fmt_ita(k["bud_period"], eur=True))
+    r5[1].metric("vs Budget (periodo)", fmt_ita(k["d_bud"], eur=True), pct(k["p_bud"]))
 
     st.metric("Budget (sem)", fmt_ita(k["bud_sem"], eur=True))
 
-# 3 blocchi: SW / SRV / TOT
 cA, cB, cC = st.columns(3)
 with cA:
     render_block("SOFTWARE", sw)
@@ -528,72 +567,3 @@ with cc1:
     plot_tipo("Software")
 with cc2:
     plot_tipo("Servizi")
-
-# ---- TABELLA: spaccato numerico mese per mese ----
-st.subheader("Tabella mese per mese (periodo selezionato)")
-
-def month_table(label: str):
-    d = df_range[df_range["tipo"].astype(str).str.lower() == label.lower()].copy()
-    if d.empty:
-        return pd.DataFrame()
-    t = d.groupby("num_mese", as_index=False).agg(
-        Attuale=("attuale_mese","sum"),
-        PY=("py_mese","sum"),
-        Rolling=("budget_rolling_mese","sum"),
-    )
-    t["vs_PY"] = t["Attuale"] - t["PY"]
-    t["vs_Rolling"] = t["Attuale"] - t["Rolling"]
-    t["Mese"] = t["num_mese"].apply(lambda m: f"{int(m):02d}-{months_it.get(int(m), str(m))}")
-    t = t[["Mese","Attuale","PY","Rolling","vs_PY","vs_Rolling"]]
-    return t
-
-sw_t = month_table("Software")
-srv_t = month_table("Servizi")
-
-# totale mese per mese (somma delle tabelle)
-if not sw_t.empty or not srv_t.empty:
-    # merge per Mese
-    base = pd.DataFrame({"Mese": sorted(set((sw_t["Mese"].tolist() if not sw_t.empty else []) + (srv_t["Mese"].tolist() if not srv_t.empty else [])))})
-    def merge_on(base, t, prefix):
-        if t.empty:
-            for c in ["Attuale","PY","Rolling","vs_PY","vs_Rolling"]:
-                base[f"{prefix}_{c}"] = 0.0
-            return base
-        tmp = t.copy()
-        for c in ["Attuale","PY","Rolling","vs_PY","vs_Rolling"]:
-            tmp.rename(columns={c:f"{prefix}_{c}"}, inplace=True)
-        return base.merge(tmp, on="Mese", how="left").fillna(0.0)
-
-    base = merge_on(base, sw_t, "SW")
-    base = merge_on(base, srv_t, "SRV")
-
-    tot_t = pd.DataFrame()
-    tot_t["Mese"] = base["Mese"]
-    tot_t["Attuale"] = base["SW_Attuale"] + base["SRV_Attuale"]
-    tot_t["PY"] = base["SW_PY"] + base["SRV_PY"]
-    tot_t["Rolling"] = base["SW_Rolling"] + base["SRV_Rolling"]
-    tot_t["vs_PY"] = tot_t["Attuale"] - tot_t["PY"]
-    tot_t["vs_Rolling"] = tot_t["Attuale"] - tot_t["Rolling"]
-
-else:
-    tot_t = pd.DataFrame()
-
-def show_table(title, t):
-    if t.empty:
-        st.info(f"Nessun dato per {title}")
-        return
-    st.markdown(f"**{title}**")
-    sty = t.style.format({
-        "Attuale": lambda x: fmt_ita(x, eur=True),
-        "PY": lambda x: fmt_ita(x, eur=True),
-        "Rolling": lambda x: fmt_ita(x, eur=True),
-        "vs_PY": lambda x: fmt_ita(x, eur=True),
-        "vs_Rolling": lambda x: fmt_ita(x, eur=True),
-    })
-    st.dataframe(sty, use_container_width=True, hide_index=True, height=320)
-
-show_table("Software", sw_t)
-st.divider()
-show_table("Servizi", srv_t)
-st.divider()
-show_table("Totale", tot_t)
