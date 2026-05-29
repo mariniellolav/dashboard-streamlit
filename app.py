@@ -404,7 +404,10 @@ def kpi_fatt(tipo_label):
     d = df_range[df_range["tipo"].astype(str).str.lower() == tipo_label.lower()].copy()
     fatt = float(d["attuale_mese"].sum()) if not d.empty else 0.0
     py = float(d["py_mese"].sum()) if not d.empty else 0.0
-    roll = float(d["budget_rolling_mese"].sum()) if not d.empty else 0.0
+    # Rolling: prendo SOLO il valore dell'ultimo mese selezionato (m_to)
+d_last = df_sem[(df_sem["tipo"].astype(str).str.lower() == tipo_label.lower()) &
+                (df_sem["num_mese"] == m_to)].copy()
+roll = float(d_last["budget_rolling_mese"].sum()) if not d_last.empty else 0.0
 
     bud_sem_val = budget_sem(tipo_label)
     bud_period = bud_sem_val * (months_selected / months_total)
